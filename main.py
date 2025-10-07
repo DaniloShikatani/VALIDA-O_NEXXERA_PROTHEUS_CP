@@ -1,105 +1,40 @@
 import streamlit as st
 import pandas as pd
-import io
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Conciliação de Pagamentos", layout="wide")
-st.title("🤖 Conciliador de Títulos: Tesouraria vs. VAN Bancária")
-st.markdown("Faça o upload dos relatórios da Tesouraria e da Nexxera para verificar os pagamentos processados.")
+st.set_page_config(layout="wide")
+st.title("🕵️ Ferramenta de Diagnóstico de Arquivo CSV")
+st.info("Faça o upload do arquivo CSV que está apresentando o ParserError para inspecionar seu conteúdo.")
 
-# --- 2. FUNÇÕES DE AJUDA ---
-def limpar_valor(valor):
-    """Converte uma coluna de valor (texto, com vírgula) para número (float)."""
-    if isinstance(valor, (int, float)):
-        return float(valor)
-    if isinstance(valor, str):
+# 1. Upload do arquivo problemático
+uploaded_file = st.file_uploader(
+    "Faça o upload do seu 'Rel Tesouraria Pagamentos.csv'",
+    type=['csv']
+)
+
+if uploaded_file:
+    # 2. Mostra as primeiras linhas do arquivo como texto puro
+    st.subheader("Conteúdo Bruto do Arquivo (Primeiras 20 linhas)")
+    
+    # Lê as primeiras linhas para inspeção visual
+    file_content_bytes = uploaded_file.getvalue()
+    
+    # Tenta decodificar com diferentes encodings comuns
+    try:
+        st.write("Tentando decodificar com 'latin1'...")
+        file_content_str = file_content_bytes.decode('latin1')
+        st.code(file_content_str, language='text')
+    except UnicodeDecodeError:
+        st.write("Falhou com 'latin1'. Tentando decodificar com 'utf-8'...")
         try:
-            # Remove 'R$', espaços, pontos de milhar e troca vírgula por ponto
-            return float(valor.replace('R$', '').strip().replace('.', '').replace(',', '.'))
-        except (ValueError, TypeError):
-            return 0.0
-    return 0.0
-
-@st.cache_data
-def converter_df_para_csv(df):
-    """Converte um DataFrame para CSV em memória, pronto para download."""
-    return df.to_csv(index=False, sep=';', encoding='utf-8-sig', decimal=',').encode('utf-8')
-
-
-# --- 3. UPLOAD DOS ARQUIVOS ---
-st.header("📤 1. Faça o Upload dos Relatórios")
-col1, col2 = st.columns(2)
-
-with col1:
-    arquivo_tesouraria = st.file_uploader("Relatório da Tesouraria", type=["csv", "xlsx"])
-
-with col2:
-    arquivo_nexxera = st.file_uploader("Relatório da VAN (Nexxera)", type=["csv", "xlsx"])
-
-
-# --- 4. LÓGICA DE PROCESSAMENTO E CONCILIAÇÃO ---
-if arquivo_tesouraria and arquivo_nexxera:
-    st.header("▶️ 2. Inicie a Conciliação")
-    if st.button("Conciliar Relatórios"):
-        with st.spinner("Mágica acontecendo... Lendo, padronizando e cruzando os dados..."):
-            
-            # --- Leitura e Pré-Processamento ---
-            # <<< CORREÇÃO AQUI >>>
-            df_tesouraria = pd.read_csv(arquivo_tesouraria, sep=';', encoding='latin1', engine='python')
-            df_nexxera = pd.read_csv(arquivo_nexxera, sep=';', encoding='latin1', engine='python')
-
-            # Padroniza nomes das colunas e limpa os dados
-            df_tesouraria.rename(columns={'NOSSO NÚMERO': 'ChaveTitulo', 'VALOR DO TÍTULO': 'Valor'}, inplace=True)
-            df_tesouraria['Valor'] = df_tesouraria['Valor'].apply(limpar_valor)
-            df_tesouraria['ChaveConciliacao'] = df_tesouraria['ChaveTitulo'].astype(str) + '_' + df_tesouraria['Valor'].astype(str)
-            
-            df_nexxera.rename(columns={'Seu Número': 'ChaveTitulo', 'Valor do Título': 'Valor'}, inplace=True)
-            df_nexxera['Valor'] = df_nexxera['Valor'].apply(limpar_valor)
-            df_nexxera['ChaveConciliacao'] = df_nexxera['ChaveTitulo'].astype(str) + '_' + df_nexxera['Valor'].astype(str)
-            df_nexxera['StatusVAN'] = 'Processado na VAN'
-            
-            st.success("Arquivos lidos e padronizados com sucesso!")
-
-            # --- A Conciliação (Merge) ---
-            df_resultado = pd.merge(
-                df_tesouraria,
-                df_nexxera[['ChaveConciliacao', 'StatusVAN']],
-                on='ChaveConciliacao',
-                how='left'
-            )
-            
-            df_conciliados = df_resultado[df_resultado['StatusVAN'].notna()]
-            df_nao_encontrados = df_resultado[df_resultado['StatusVAN'].isna()]
-            
-            st.session_state['df_conciliados'] = df_conciliados
-            st.session_state['df_nao_encontrados'] = df_nao_encontrados
-            
-        st.balloons()
-        st.success("Conciliação concluída!")
-
-
-# --- 5. EXIBIÇÃO DOS RESULTADOS ---
-if 'df_conciliados' in st.session_state:
-    st.header("📊 3. Resultados da Conciliação")
+            file_content_str = file_content_bytes.decode('utf-8')
+            st.code(file_content_str, language='text')
+        except Exception as e:
+            st.error(f"Não foi possível decodificar o arquivo. Erro: {e}")
     
-    df_conciliados = st.session_state['df_conciliados']
-    df_nao_encontrados = st.session_state['df_nao_encontrados']
-    total_tesouraria = len(df_conciliados) + len(df_nao_encontrados)
-    
-    st.subheader("Resumo Geral")
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Títulos na Tesouraria", value=f"{total_tesouraria}")
-    kpi2.metric("✅ Conciliados na VAN", value=f"{len(df_conciliados)}")
-    kpi3.metric("❌ Não Encontrados na VAN", value=f"{len(df_nao_encontrados)}")
-    
-    tab_conciliados, tab_nao_encontrados = st.tabs(["✅ Títulos Conciliados", "❌ Títulos Não Encontrados"])
-    
-    with tab_conciliados:
-        st.write(f"Encontrados {len(df_conciliados)} títulos correspondentes no relatório da VAN.")
-        st.dataframe(df_conciliados)
-        st.download_button("📥 Baixar Lista de Conciliados (CSV)", converter_df_para_csv(df_conciliados), "conciliados.csv", "text/csv")
-        
-    with tab_nao_encontrados:
-        st.write(f"Estes {len(df_nao_encontrados)} títulos da Tesouraria não foram encontrados no relatório da VAN.")
-        st.dataframe(df_nao_encontrados)
-        st.download_button("📥 Baixar Lista de Pendentes (CSV)", converter_df_para_csv(df_nao_encontrados), "pendentes_conciliacao.csv", "text/csv")
+    st.markdown("---")
+    st.warning(
+        "**O que procurar no texto acima:**\n\n"
+        "- **Linhas no topo:** Existem linhas de título ou em branco antes dos nomes das colunas?\n"
+        "- **Separador:** O caractere que separa as colunas é realmente um ponto e vírgula (`;`)?\n"
+        "- **Aspas:** Você vê algum campo de texto com aspas (`\"`) que pareçam fora do lugar?"
+    )
