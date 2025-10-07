@@ -5,11 +5,10 @@ import io
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Conciliação de Pagamentos", layout="wide")
 st.title("🤖 Conciliador de Títulos: Tesouraria vs. VAN Bancária")
-st.markdown("Faça o upload dos relatórios da Tesouraria e da Nexxera para verificar os pagamentos processados.")
+st.markdown("Faça o upload dos relatórios da Tesouraria e da Nexxera (em formato Excel) para verificar os pagamentos processados.")
 
 # --- 2. FUNÇÕES DE AJUDA ---
 def limpar_valor(valor):
-    """Converte uma coluna de valor (texto, com vírgula) para número (float)."""
     if isinstance(valor, (int, float)):
         return float(valor)
     if isinstance(valor, str):
@@ -21,7 +20,6 @@ def limpar_valor(valor):
 
 @st.cache_data
 def converter_df_para_csv(df):
-    """Converte um DataFrame para CSV em memória, pronto para download."""
     return df.to_csv(index=False, sep=';', encoding='utf-8-sig', decimal=',').encode('utf-8')
 
 
@@ -30,10 +28,10 @@ st.header("📤 1. Faça o Upload dos Relatórios")
 col1, col2 = st.columns(2)
 
 with col1:
-    arquivo_tesouraria = st.file_uploader("Relatório da Tesouraria", type=["csv", "xlsx"])
+    arquivo_tesouraria = st.file_uploader("Relatório da Tesouraria (.xlsx)", type=["xlsx"])
 
 with col2:
-    arquivo_nexxera = st.file_uploader("Relatório da VAN (Nexxera)", type=["csv", "xlsx"])
+    arquivo_nexxera = st.file_uploader("Relatório da VAN (Nexxera) (.xlsx)", type=["xlsx"])
 
 
 # --- 4. LÓGICA DE PROCESSAMENTO E CONCILIAÇÃO ---
@@ -42,41 +40,39 @@ if arquivo_tesouraria and arquivo_nexxera:
     if st.button("Conciliar Relatórios"):
         with st.spinner("Mágica acontecendo... Lendo, padronizando e cruzando os dados..."):
             
-            # --- Leitura e Pré-Processamento ---
-            df_tesouraria = pd.read_csv(arquivo_tesouraria, sep=';', encoding='latin1', engine='python')
-            
-            # --- CORREÇÃO APLICADA AQUI: Leitura do arquivo Nexxera ---
-            
-            # 1. Definimos o cabeçalho que você forneceu
-            cabecalho_nexxera = [
-                'Status', 'Nome Favorecido/Contribuinte', 'Inscrição', 'Banco', 'Agência', 'Conta', 
-                'DAC', 'Operação', 'Seu Número', 'Data Vencimento', 'Data Pagamento', 'Valor', 'Lançamento', 
-                'Banco_2', 'Agência_2', 'Conta_2', 'DAC_2', 'Nosso Número', 'Código de Barras', 
-                'Data/Hora de Geração', 'Ocorrência 1', 'Ocorrência 2', 'Ocorrência 3', 'Ocorrência 4', 
-                'Ocorrência 5', 'Autenticação Bancária', 'Autenticação Legislativa', 'Observação', 
-                'Período de Apuração', 'Competência', 'Código da Receita', 'UF', 'Placa', 'Autorizadores', 
-                'Número NSA Retorno', 'Autorização 1', 'Autorização 2', 'Autorização 3', 'Autorização 4', 
-                'Autorização 5', 'Finalidade / Compl. do Tipo de Serviço', 'Tipo Chave Pix', 'Chave Pix'
-            ]
-            
-            # 2. Lemos o arquivo sem cabeçalho e aplicamos os nomes da nossa lista
-            df_nexxera = pd.read_csv(
-                arquivo_nexxera, 
-                sep=';', 
-                encoding='latin1', 
-                engine='python',
-                header=None, # Informa que o arquivo não tem cabeçalho
-                names=cabecalho_nexxera # Aplica os nomes da nossa lista
-            )
+            # --- CORREÇÃO APLICADA AQUI: Lendo arquivos Excel ---
+            try:
+                # 1. Lendo o arquivo da Tesouraria como Excel
+                df_tesouraria = pd.read_excel(arquivo_tesouraria)
+                
+                # 2. Definindo o cabeçalho para o arquivo Nexxera
+                cabecalho_nexxera = [
+                    'Status', 'Nome Favorecido/Contribuinte', 'Inscrição', 'Banco', 'Agência', 'Conta', 
+                    'DAC', 'Operação', 'Seu Número', 'Data Vencimento', 'Data Pagamento', 'Valor', 'Lançamento', 
+                    'Banco_2', 'Agência_2', 'Conta_2', 'DAC_2', 'Nosso Número', 'Código de Barras', 
+                    'Data/Hora de Geração', 'Ocorrência 1', 'Ocorrência 2', 'Ocorrência 3', 'Ocorrência 4', 
+                    'Ocorrência 5', 'Autenticação Bancária', 'Autenticação Legislativa', 'Observação', 
+                    'Período de Apuração', 'Competência', 'Código da Receita', 'UF', 'Placa', 'Autorizadores', 
+                    'Número NSA Retorno', 'Autorização 1', 'Autorização 2', 'Autorização 3', 'Autorização 4', 
+                    'Autorização 5', 'Finalidade / Compl. do Tipo de Serviço', 'Tipo Chave Pix', 'Chave Pix'
+                ]
+                
+                # 3. Lendo o arquivo da Nexxera como Excel, sem cabeçalho e aplicando os nomes
+                df_nexxera = pd.read_excel(
+                    arquivo_nexxera, 
+                    header=None, 
+                    names=cabecalho_nexxera
+                )
+            except Exception as e:
+                st.error(f"Erro ao ler um dos arquivos Excel. Verifique se eles não estão corrompidos. Erro: {e}")
+                st.stop()
             # --- FIM DA CORREÇÃO ---
 
             # Padroniza nomes das colunas e limpa os dados
-            # Tabela da Tesouraria
             df_tesouraria.rename(columns={'NOSSO NÚMERO': 'ChaveTitulo', 'VALOR DO TÍTULO': 'Valor'}, inplace=True)
             df_tesouraria['Valor'] = df_tesouraria['Valor'].apply(limpar_valor)
             df_tesouraria['ChaveConciliacao'] = df_tesouraria['ChaveTitulo'].astype(str) + '_' + df_tesouraria['Valor'].astype(str)
             
-            # Tabela da Nexxera (Ajuste no rename para usar o nome de coluna que definimos no cabeçalho)
             df_nexxera.rename(columns={'Seu Número': 'ChaveTitulo'}, inplace=True)
             df_nexxera['Valor'] = df_nexxera['Valor'].apply(limpar_valor)
             df_nexxera['ChaveConciliacao'] = df_nexxera['ChaveTitulo'].astype(str) + '_' + df_nexxera['Valor'].astype(str)
