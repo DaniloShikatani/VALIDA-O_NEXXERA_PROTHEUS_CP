@@ -7,19 +7,10 @@ st.set_page_config(page_title="Conciliação de Pagamentos", layout="wide")
 st.title("🤖 Conciliador de Títulos: Tesouraria vs. VAN Bancária")
 st.markdown("Faça o upload dos relatórios da Tesouraria e da Nexxera (em formato Excel) para verificar os pagamentos processados.")
 
-# --- 2. FUNÇÕES DE AJUDA ---
-def limpar_valor(valor):
-    if isinstance(valor, (int, float)):
-        return float(valor)
-    if isinstance(valor, str):
-        try:
-            return float(valor.replace('R$', '').strip().replace('.', '').replace(',', '.'))
-        except (ValueError, TypeError):
-            return 0.0
-    return 0.0
-
+# --- 2. FUNÇÕES DE AJUDA (Não precisamos mais da limpeza de valor aqui) ---
 @st.cache_data
 def converter_df_para_csv(df):
+    """Converte um DataFrame para CSV em memória, pronto para download."""
     return df.to_csv(index=False, sep=';', encoding='utf-8-sig', decimal=',').encode('utf-8')
 
 
@@ -41,6 +32,7 @@ if arquivo_tesouraria and arquivo_nexxera:
         with st.spinner("Mágica acontecendo... Lendo, padronizando e cruzando os dados..."):
             
             try:
+                # --- Leitura dos Arquivos ---
                 df_tesouraria = pd.read_excel(arquivo_tesouraria)
                 
                 cabecalho_nexxera = [
@@ -54,41 +46,47 @@ if arquivo_tesouraria and arquivo_nexxera:
                     'Autorização 5', 'Finalidade / Compl. do Tipo de Serviço', 'Tipo Chave Pix', 'Chave Pix'
                 ]
                 df_nexxera = pd.read_excel(arquivo_nexxera, header=None, names=cabecalho_nexxera)
-
             except Exception as e:
-                st.error(f"Erro ao ler um dos arquivos Excel. Verifique se não estão corrompidos. Erro: {e}")
+                st.error(f"Erro ao ler um dos arquivos Excel. Verifique se eles não estão corrompidos. Erro: {e}")
                 st.stop()
 
-            # --- CORREÇÃO APLICADA AQUI ---
-            # Padroniza nomes das colunas da Tesouraria com os nomes corretos
-            df_tesouraria.rename(columns={
-                'NOSSO NÚMERO': 'ChaveTitulo',
-                'Vlr.Titulo': 'Valor'  # <<< Corrigido de 'VALOR DO TÍTULO' para 'Vlr.Titulo'
-            }, inplace=True)
+            # --- CORREÇÃO PRINCIPAL: Padronização das Chaves ---
+            
+            # Padroniza a chave da Tesouraria (converte para texto e remove espaços)
+            if 'Id. Cnab' in df_tesouraria.columns:
+                df_tesouraria['Id. Cnab'] = df_tesouraria['Id. Cnab'].astype(str).str.strip()
+            else:
+                st.error("ERRO: A coluna 'Id. Cnab' não foi encontrada no Relatório da Tesouraria.")
+                st.stop()
+
+            # Padroniza a chave da Nexxera
+            if 'Seu Número' in df_nexxera.columns:
+                df_nexxera['Seu Número'] = df_nexxera['Seu Número'].astype(str).str.strip()
+                df_nexxera['StatusVAN'] = 'Processado na VAN' # Adiciona uma flag para o merge
+            else:
+                st.error("ERRO: A coluna 'Seu Número' não foi encontrada no Relatório da Nexxera.")
+                st.stop()
             # --- FIM DA CORREÇÃO ---
-
-            df_tesouraria['Valor'] = df_tesouraria['Valor'].apply(limpar_valor)
-            df_tesouraria['ChaveConciliacao'] = df_tesouraria['ChaveTitulo'].astype(str) + '_' + df_tesouraria['Valor'].astype(str)
             
-            # Padroniza nomes das colunas da Nexxera
-            df_nexxera.rename(columns={'Seu Número': 'ChaveTitulo'}, inplace=True)
-            df_nexxera['Valor'] = df_nexxera['Valor'].apply(limpar_valor)
-            df_nexxera['ChaveConciliacao'] = df_nexxera['ChaveTitulo'].astype(str) + '_' + df_nexxera['Valor'].astype(str)
-            df_nexxera['StatusVAN'] = 'Processado na VAN'
-            
-            st.success("Arquivos lidos e padronizados com sucesso!")
+            st.success("Arquivos lidos e chaves padronizadas com sucesso!")
 
-            # --- A Conciliação (Merge) ---
+            # --- A Conciliação (Merge) com a nova lógica ---
+            # Otimização: Usamos apenas as colunas necessárias da Nexxera para o merge
+            df_nexxera_para_merge = df_nexxera[['Seu Número', 'StatusVAN']].drop_duplicates()
+
             df_resultado = pd.merge(
                 df_tesouraria,
-                df_nexxera[['ChaveConciliacao', 'StatusVAN']],
-                on='ChaveConciliacao',
-                how='left'
+                df_nexxera_para_merge,
+                left_on='Id. Cnab',     # Chave da tabela da esquerda (Tesouraria)
+                right_on='Seu Número',  # Chave da tabela da direita (Nexxera)
+                how='left'              # Mantém todos os registros da Tesouraria
             )
             
+            # Separa os resultados
             df_conciliados = df_resultado[df_resultado['StatusVAN'].notna()]
             df_nao_encontrados = df_resultado[df_resultado['StatusVAN'].isna()]
             
+            # Salva os resultados na memória do app
             st.session_state['df_conciliados'] = df_conciliados
             st.session_state['df_nao_encontrados'] = df_nao_encontrados
             
