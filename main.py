@@ -7,7 +7,7 @@ st.set_page_config(page_title="Conciliação de Pagamentos", layout="wide")
 st.title("🤖 Conciliador de Títulos: Tesouraria vs. VAN Bancária")
 st.markdown("Faça o upload dos relatórios da Tesouraria e da Nexxera (em formato Excel) para verificar os pagamentos processados.")
 
-# --- 2. FUNÇÕES DE AJUDA (Não precisamos mais da limpeza de valor aqui) ---
+# --- 2. FUNÇÕES DE AJUDA ---
 @st.cache_data
 def converter_df_para_csv(df):
     """Converte um DataFrame para CSV em memória, pronto para download."""
@@ -50,43 +50,43 @@ if arquivo_tesouraria and arquivo_nexxera:
                 st.error(f"Erro ao ler um dos arquivos Excel. Verifique se eles não estão corrompidos. Erro: {e}")
                 st.stop()
 
-            # --- CORREÇÃO PRINCIPAL: Padronização das Chaves ---
-            
-            # Padroniza a chave da Tesouraria (converte para texto e remove espaços)
+            # --- NOVO BLOCO: Filtro para remover linhas sem chave no relatório da Tesouraria ---
+            st.write(f"Relatório Tesouraria: {len(df_tesouraria)} linhas carregadas.")
+            # Garante que a coluna 'Id. Cnab' exista antes de filtrar
             if 'Id. Cnab' in df_tesouraria.columns:
-                df_tesouraria['Id. Cnab'] = df_tesouraria['Id. Cnab'].astype(str).str.strip()
+                # Remove as linhas onde a coluna 'Id. Cnab' está vazia/nula
+                df_tesouraria.dropna(subset=['Id. Cnab'], inplace=True)
+                st.write(f"Relatório Tesouraria: {len(df_tesouraria)} linhas restantes após remover registros sem 'Id. Cnab'.")
             else:
-                st.error("ERRO: A coluna 'Id. Cnab' não foi encontrada no Relatório da Tesouraria.")
+                st.error("ERRO: A coluna 'Id. Cnab' não foi encontrada no Relatório da Tesouraria. Verifique o nome da coluna.")
                 st.stop()
+            # --- FIM DO NOVO BLOCO ---
 
-            # Padroniza a chave da Nexxera
+            # --- Padronização das Chaves ---
+            df_tesouraria['Id. Cnab'] = df_tesouraria['Id. Cnab'].astype(str).str.strip()
+
             if 'Seu Número' in df_nexxera.columns:
                 df_nexxera['Seu Número'] = df_nexxera['Seu Número'].astype(str).str.strip()
-                df_nexxera['StatusVAN'] = 'Processado na VAN' # Adiciona uma flag para o merge
+                df_nexxera['StatusVAN'] = 'Processado na VAN'
             else:
                 st.error("ERRO: A coluna 'Seu Número' não foi encontrada no Relatório da Nexxera.")
                 st.stop()
-            # --- FIM DA CORREÇÃO ---
             
             st.success("Arquivos lidos e chaves padronizadas com sucesso!")
 
-            # --- A Conciliação (Merge) com a nova lógica ---
-            # Otimização: Usamos apenas as colunas necessárias da Nexxera para o merge
+            # --- A Conciliação (Merge) ---
             df_nexxera_para_merge = df_nexxera[['Seu Número', 'StatusVAN']].drop_duplicates()
-
             df_resultado = pd.merge(
                 df_tesouraria,
                 df_nexxera_para_merge,
-                left_on='Id. Cnab',     # Chave da tabela da esquerda (Tesouraria)
-                right_on='Seu Número',  # Chave da tabela da direita (Nexxera)
-                how='left'              # Mantém todos os registros da Tesouraria
+                left_on='Id. Cnab',
+                right_on='Seu Número',
+                how='left'
             )
             
-            # Separa os resultados
             df_conciliados = df_resultado[df_resultado['StatusVAN'].notna()]
             df_nao_encontrados = df_resultado[df_resultado['StatusVAN'].isna()]
             
-            # Salva os resultados na memória do app
             st.session_state['df_conciliados'] = df_conciliados
             st.session_state['df_nao_encontrados'] = df_nao_encontrados
             
@@ -100,11 +100,11 @@ if 'df_conciliados' in st.session_state:
     
     df_conciliados = st.session_state['df_conciliados']
     df_nao_encontrados = st.session_state['df_nao_encontrados']
-    total_tesouraria = len(df_conciliados) + len(df_nao_encontrados)
+    total_tesouraria_valido = len(df_conciliados) + len(df_nao_encontrados)
     
     st.subheader("Resumo Geral")
     kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Títulos na Tesouraria", value=f"{total_tesouraria}")
+    kpi1.metric("Títulos Válidos na Tesouraria", value=f"{total_tesouraria_valido}")
     kpi2.metric("✅ Conciliados na VAN", value=f"{len(df_conciliados)}")
     kpi3.metric("❌ Não Encontrados na VAN", value=f"{len(df_nao_encontrados)}")
     
